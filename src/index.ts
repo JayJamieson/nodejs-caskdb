@@ -187,7 +187,6 @@ export async function open(path: string) {
       cursor += writeResult.bytesWritten;
     },
     close: async () => {
-      await handle.sync();
       await handle.close();
     },
   };
