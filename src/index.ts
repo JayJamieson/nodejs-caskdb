@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import { Buffer } from "node:buffer";
-import { write } from "node:fs";
 
 /**
  * ┌───────────────┬──────────────┬────────────────┐
@@ -78,6 +77,14 @@ export function decodeKV(buff: Buffer, offset: number): KeyValue {
 }
 
 export async function open(path: string) {
+  /**
+   * interal use pointing to current location in log/cask file
+   */
+  let _cursor = 0;
+
+  /**
+   * internal mapping of key to value offset
+   */
   const keyDir = new Map<string, KeyEntry>();
 
   // currently we only handle single log file for persistance
@@ -86,9 +93,6 @@ export async function open(path: string) {
   // This means we currently also break the immutability
   const handle = await fs.open(path, "a+");
   // const fstat = await fs.stat(path);
-
-  // current position of "log" file
-  let cursor = 0;
 
   await _replay();
 
@@ -130,16 +134,12 @@ export async function open(path: string) {
 
         const key = buffer.toString("utf8", offset + HEADER_SIZE, offset + HEADER_SIZE + keySize);
 
-        // const value = buffer.toString(
-        //   "utf8",
-        //   offset + HEADER_SIZE + keySize,
-        //   offset + HEADER_SIZE + keySize + valueSize,
-        // );
-
         keyDir.set(key, {
           fileId: 0, // Assuming single file for now
           size: HEADER_SIZE + keySize + valueSize,
-          position: filePosition + offset + HEADER_SIZE + keySize,
+          // TODO: #1 write value position offset
+          // position: filePosition + offset + HEADER_SIZE + keySize,
+          position: filePosition + offset,
           timestamp: timestamp,
         });
 
@@ -165,6 +165,7 @@ export async function open(path: string) {
       }
       const buffer = Buffer.alloc(keyEntry.size);
 
+      // TODO: #1 optimise read to only read in value as needed and not whole entry
       await handle.read(buffer, 0, keyEntry.size, keyEntry.position);
       const result = decodeKV(buffer, 0);
 
@@ -181,10 +182,10 @@ export async function open(path: string) {
         fileId: 0,
         timestamp,
         size: writeResult.bytesWritten,
-        position: cursor
+        position: _cursor
       });
 
-      cursor += writeResult.bytesWritten;
+      _cursor += writeResult.bytesWritten;
     },
     close: async () => {
       await handle.close();
@@ -193,7 +194,7 @@ export async function open(path: string) {
 }
 
 
-const handle = await open("tmp.db");
+// const handle = await open("tmp.db");
 
 // uncomment to fill with data
 // for (let index = 1; index <= 50; index++) {
@@ -208,4 +209,4 @@ const handle = await open("tmp.db");
 // }
 
 
-await handle.close();
+// await handle.close();

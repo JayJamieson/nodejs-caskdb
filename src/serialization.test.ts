@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { decodeHeader, decodeKV, encodeHeader, encodeKV } from "./index.js";
 
-test("test header serialisation", () => {
+test("test header serialization", () => {
   const buff = Buffer.alloc(16);
   const timeStamp = Date.now();
 
@@ -14,7 +14,7 @@ test("test header serialisation", () => {
   expect(header[2]).toBe(12);
 });
 
-test("test key value serialisation", () => {
+test("test key value serialization", () => {
   const timeStamp = Date.now();
   const entryBuffer = encodeKV(timeStamp, "foo", "foobar");
   const entry = decodeKV(entryBuffer, 0);
@@ -23,7 +23,7 @@ test("test key value serialisation", () => {
   expect(entry.value).toBe("foobar");
 });
 
-test("test empty key value serialisation", () => {
+test("test empty key value serialization", () => {
   const timeStamp = Date.now();
 
   const entryBuffer = encodeKV(timeStamp, "", "");
