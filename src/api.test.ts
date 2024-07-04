@@ -13,7 +13,7 @@ suite("API tests", () => {
   });
 
   test("set() persists to disk", async () => {
-    const db = await open(".testdata/set.dat");
+    const db = await open(".testdata/set");
     await db.set("foo", "bar");
     await db.close();
 
@@ -27,7 +27,7 @@ suite("API tests", () => {
   });
 
   test("get() reads from disk", async () => {
-    const db = await open(".testdata/get.dat");
+    const db = await open(".testdata/get");
     await db.set("foo", "bar");
 
     const value = await db.get("foo");
@@ -37,26 +37,51 @@ suite("API tests", () => {
 
 
   test("open existing db replays changes", async () => {
-    let db = await open(".testdata/replay.dat");
+    let db = await open(".testdata/replay");
     await db.set("foo", "foobar");
     await db.close();
 
-    db = await open(".testdata/replay.dat");
+    db = await open(".testdata/replay");
 
     const value = await db.get("foo");
     expect("foobar").toBe(value);
   });
 
   test("open existing db replays changes to latest change", async () => {
-    let db = await open(".testdata/replay.dat");
+    let db = await open(".testdata/replay");
     await db.set("foo", "foobar1");
     await db.set("foo", "foobar2");
     await db.set("foo", "foobar3");
     await db.close();
 
-    db = await open(".testdata/replay.dat");
+    db = await open(".testdata/replay");
 
     const value = await db.get("foo");
     expect("foobar3").toBe(value);
+  });
+
+  test("delete() deletes key", async () => {
+    const db = await open(".testdata/delete");
+
+    await db.set("foo", "deleteme!");
+    await db.delete("foo");
+
+    const value = await db.get("foo");
+
+    expect(null).toBe(value);
+  });
+
+  test("delete() persists after close and open", async () => {
+    let db = await open(".testdata/delete_replay");
+
+    await db.set("foo", "deleteme!");
+    await db.delete("foo");
+    await db.close();
+
+    db = await open(".testdata/delete_replay");
+
+    const value = await db.get("foo");
+
+    expect(null).toBe(value);
   });
 });
