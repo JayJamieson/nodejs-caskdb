@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { decodeHeader, decodeKV, encodeHeader, encodeKV } from "./index.js";
+import { decodeHeader, decodeKV, encodeHeader, encodeKV } from "./encoding.js";
 
 test("test header serialization", () => {
   const buff = Buffer.alloc(16);

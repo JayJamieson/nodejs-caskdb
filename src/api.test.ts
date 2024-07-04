@@ -1,4 +1,6 @@
-import { decodeKV, open } from "./index.js";
+import { decodeKV } from "./encoding.js";
+import {open} from "./db.js";
+
 import { beforeEach, expect, suite, test } from "vitest";
 import fs from "node:fs/promises";
 
@@ -11,11 +13,11 @@ suite("API tests", () => {
   });
 
   test("set() persists to disk", async () => {
-    const db = await open(".testdata/set.db");
+    const db = await open(".testdata/set.dat");
     await db.set("foo", "bar");
     await db.close();
 
-    const buffer = await fs.readFile(".testdata/set.db");
+    const buffer = await fs.readFile(".testdata/set.dat");
     const entry = decodeKV(buffer, 0);
 
     expect(22).toBe(buffer.length);
@@ -25,7 +27,7 @@ suite("API tests", () => {
   });
 
   test("get() reads from disk", async () => {
-    const db = await open(".testdata/get.db");
+    const db = await open(".testdata/get.dat");
     await db.set("foo", "bar");
 
     const value = await db.get("foo");
@@ -35,24 +37,24 @@ suite("API tests", () => {
 
 
   test("open existing db replays changes", async () => {
-    let db = await open(".testdata/replay.db");
+    let db = await open(".testdata/replay.dat");
     await db.set("foo", "foobar");
     await db.close();
 
-    db = await open(".testdata/replay.db");
+    db = await open(".testdata/replay.dat");
 
     const value = await db.get("foo");
     expect("foobar").toBe(value);
   });
 
   test("open existing db replays changes to latest change", async () => {
-    let db = await open(".testdata/replay.db");
+    let db = await open(".testdata/replay.dat");
     await db.set("foo", "foobar1");
     await db.set("foo", "foobar2");
     await db.set("foo", "foobar3");
     await db.close();
 
-    db = await open(".testdata/replay.db");
+    db = await open(".testdata/replay.dat");
 
     const value = await db.get("foo");
     expect("foobar3").toBe(value);
