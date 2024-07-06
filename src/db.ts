@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import fsp from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { HEADER_SIZE, decodeHeader, decodeKV, encodeKV } from "./encoding.js";
 
@@ -11,11 +11,11 @@ export type NodeCaskOptions = {
    *
    * Larger are supported but can take up more memory while restoring
    */
-  maxSegmentSize: number;
+  maxSize: number | 1024 | 4096 | 8192 | 16384;
 };
 
 const defaultOptions: NodeCaskOptions = {
-  maxSegmentSize: 4 * 1024,
+  maxSize: 4 * 1024,
 };
 
 export type KeyEntry = {
@@ -25,8 +25,12 @@ export type KeyEntry = {
   timestamp: number;
 };
 
-export async function open(name: string, options?: NodeCaskOptions) {
-  const { maxSegmentSize: maxLogSize } = options ?? defaultOptions;
+export async function openCask(name: string, options?: NodeCaskOptions) {
+  const { maxSize: maxLogSize } = options ?? defaultOptions;
+
+  if (maxLogSize < 1024 || maxLogSize > 16384) {
+    throw new Error("maxSize needs to be one of 1024 | 4096 | 8192 | 16384");
+  }
 
   /**
    * interal use pointing to current location in log/cask file
@@ -42,7 +46,7 @@ export async function open(name: string, options?: NodeCaskOptions) {
   // bitcask paper would have you use multiple fixed size log
   // files and merging as needed.
   // This means we currently also break the immutability
-  const handle = await fs.open(`${name}.dat`, "a+");
+  const handle = await fsp.open(`${name}.dat`, "a+");
 
   await _replay();
 
@@ -88,7 +92,7 @@ export async function open(name: string, options?: NodeCaskOptions) {
       );
 
       // tombstone value encountered, remove if exists otherwise continue
-      if (value === "💩" &&  keyDir.has(key)) {
+      if (value === "💩" && keyDir.has(key)) {
         keyDir.delete(key);
         offset += entrySize;
         continue;
@@ -106,7 +110,6 @@ export async function open(name: string, options?: NodeCaskOptions) {
       offset += entrySize;
     }
   }
-
 
   async function get(key: string): Promise<string | null> {
     const keyEntry = keyDir.get(key);
@@ -128,6 +131,8 @@ export async function open(name: string, options?: NodeCaskOptions) {
 
     const data = encodeKV(timestamp, key, value);
     const writeResult = await handle.write(data);
+
+    // TODO: implement batch/group sync after N bytes written
     await handle.sync();
 
     keyDir.set(key, {
@@ -152,13 +157,36 @@ export async function open(name: string, options?: NodeCaskOptions) {
     _cursor += writeResult.bytesWritten;
   }
 
+  function listKeys() {
+    return [...keyDir.keys()];
+  }
+
+  async function fold(callback: (key: string, value: string) => void) {
+    for (const entryTuple of keyDir.entries()) {
+      const [key, keyEntry] = entryTuple;
+      const buffer = Buffer.alloc(keyEntry.size);
+
+      // TODO: #1 optimise read to only read in value as needed and not whole entry
+      await handle.read(buffer, 0, keyEntry.size, keyEntry.position);
+      const header = decodeHeader(buffer, 0);
+
+      const value = buffer.toString(
+        "utf8",
+        HEADER_SIZE + header[1],
+        HEADER_SIZE + header[1] + header[2],
+      );
+
+      callback(key, value);
+    }
+  }
+
   return {
-    // TODO: implement list keys
-    // TODO: implement fold
     // TODO: implement merge
     get,
     set,
     delete: remove,
+    listKeys,
+    fold,
     close: handle.close,
   };
 }

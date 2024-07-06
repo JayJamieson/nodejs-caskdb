@@ -1,7 +1,7 @@
 import { decodeKV } from "./encoding.js";
-import {open} from "./db.js";
+import {openCask} from "./db.js";
 
-import { beforeEach, expect, suite, test } from "vitest";
+import { beforeEach, expect, suite, test, vi } from "vitest";
 import fs from "node:fs/promises";
 
 suite("API tests", () => {
@@ -13,7 +13,7 @@ suite("API tests", () => {
   });
 
   test("set() persists to disk", async () => {
-    const db = await open(".testdata/set");
+    const db = await openCask(".testdata/set");
     await db.set("foo", "bar");
     await db.close();
 
@@ -27,7 +27,7 @@ suite("API tests", () => {
   });
 
   test("get() reads from disk", async () => {
-    const db = await open(".testdata/get");
+    const db = await openCask(".testdata/get");
     await db.set("foo", "bar");
 
     const value = await db.get("foo");
@@ -37,31 +37,31 @@ suite("API tests", () => {
 
 
   test("open existing db replays changes", async () => {
-    let db = await open(".testdata/replay");
+    let db = await openCask(".testdata/replay");
     await db.set("foo", "foobar");
     await db.close();
 
-    db = await open(".testdata/replay");
+    db = await openCask(".testdata/replay");
 
     const value = await db.get("foo");
     expect("foobar").toBe(value);
   });
 
   test("open existing db replays changes to latest change", async () => {
-    let db = await open(".testdata/replay");
+    let db = await openCask(".testdata/replay");
     await db.set("foo", "foobar1");
     await db.set("foo", "foobar2");
     await db.set("foo", "foobar3");
     await db.close();
 
-    db = await open(".testdata/replay");
+    db = await openCask(".testdata/replay");
 
     const value = await db.get("foo");
     expect("foobar3").toBe(value);
   });
 
   test("delete() deletes key", async () => {
-    const db = await open(".testdata/delete");
+    const db = await openCask(".testdata/delete");
 
     await db.set("foo", "deleteme!");
     await db.delete("foo");
@@ -72,16 +72,45 @@ suite("API tests", () => {
   });
 
   test("delete() persists after close and open", async () => {
-    let db = await open(".testdata/delete_replay");
+    let db = await openCask(".testdata/delete_replay");
 
     await db.set("foo", "deleteme!");
     await db.delete("foo");
     await db.close();
 
-    db = await open(".testdata/delete_replay");
+    db = await openCask(".testdata/delete_replay");
 
     const value = await db.get("foo");
 
     expect(null).toBe(value);
   });
+
+  test("fold() calls callback with key and value", async () => {
+    const db = await openCask(".testdata/fold");
+
+    await db.set("k1", "v1");
+    await db.set("k2", "v2");
+    await db.set("k3", "v3");
+    const callback = vi.fn((k: string, v: string) => {});
+
+    await db.fold(callback);
+
+    expect(callback).toBeCalledTimes(3);
+    expect(callback).toBeCalledWith("k3", "v3");
+    expect(callback).toBeCalledWith("k1", "v1");
+    expect(callback).toBeCalledWith("k2", "v2");
+  });
+
+  test("listKeys() returns all keys added", async () => {
+    const db = await openCask(".testdata/listKeys");
+
+    await db.set("k1", "v1");
+    await db.set("k2", "v2");
+    await db.set("k3", "v3");
+
+    const keys = db.listKeys();
+
+    expect(["k1", "k2", "k3"]).toStrictEqual(keys);
+  });
+
 });

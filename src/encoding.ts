@@ -41,7 +41,6 @@ export function encodeKV(timestamp: number, key: string, value: string): Buffer 
   const vSize = Buffer.byteLength(value);
 
   const buff = Buffer.alloc(HEADER_SIZE + kSize + vSize);
-
   encodeHeader(buff, timestamp, kSize, vSize);
 
   buff.write(`${key}${value}`, HEADER_SIZE);
