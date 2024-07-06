@@ -11,7 +11,9 @@
     "format": "prettier --write \"{src,apps,libs,tests,bin}/**/*.{ts,mjs}\"",
     "lint": "eslint \"{src,apps,libs,tests,bin}/**/*.{ts,mjs}\" --fix --max-warnings 0"
   },
-  "keywords": ["bitcask"],
+  "keywords": [
+    "bitcask"
+  ],
   "author": "JayJamieson",
   "license": "MIT",
   "repository": {
@@ -31,7 +33,5 @@
     "typescript": "^5.4.5",
     "typescript-eslint": "^7.12.0",
     "vitest": "^1.6.0"
-  },
-  "dependencies": {
   }
 }
