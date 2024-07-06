@@ -36,7 +36,11 @@ export function decodeHeader(
   ];
 }
 
-export function encodeKV(timestamp: number, key: string, value: string): Buffer {
+export function encodeKV(
+  timestamp: number,
+  key: string,
+  value: string,
+): Buffer {
   const kSize = Buffer.byteLength(key);
   const vSize = Buffer.byteLength(value);
 

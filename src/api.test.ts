@@ -1,5 +1,5 @@
 import { decodeKV } from "./encoding.js";
-import {openCask} from "./db.js";
+import { openCask } from "./db.js";
 
 import { beforeEach, expect, suite, test, vi } from "vitest";
 import fs from "node:fs/promises";
@@ -8,7 +8,7 @@ suite("API tests", () => {
   beforeEach(async () => {
     await fs.mkdir(".testdata/");
     return async () => {
-      await fs.rm(".testdata/", {force: true, recursive: true});
+      await fs.rm(".testdata/", { force: true, recursive: true });
     };
   });
 
@@ -23,7 +23,6 @@ suite("API tests", () => {
     expect(22).toBe(buffer.length);
     expect("foo").toBe(entry.key);
     expect("bar").toBe(entry.value);
-
   });
 
   test("get() reads from disk", async () => {
@@ -34,7 +33,6 @@ suite("API tests", () => {
 
     expect("bar").toBe(value);
   });
-
 
   test("open existing db replays changes", async () => {
     let db = await openCask(".testdata/replay");
@@ -112,5 +110,4 @@ suite("API tests", () => {
 
     expect(["k1", "k2", "k3"]).toStrictEqual(keys);
   });
-
 });

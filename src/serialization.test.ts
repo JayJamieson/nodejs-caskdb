@@ -5,7 +5,7 @@ test("test header serialization", () => {
   const buff = Buffer.alloc(16);
   const timeStamp = Date.now();
 
-  encodeHeader(buff,timeStamp, 11, 12);
+  encodeHeader(buff, timeStamp, 11, 12);
   const header = decodeHeader(buff, 0);
   expect(header.length).toBe(3);
 

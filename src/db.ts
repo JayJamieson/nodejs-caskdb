@@ -180,6 +180,10 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
     }
   }
 
+  async function sync(): Promise<void> {
+    await handle.sync();
+  }
+
   return {
     // TODO: implement merge
     get,
@@ -187,6 +191,10 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
     delete: remove,
     listKeys,
     fold,
+    sync,
+    merge: (name: string) => {
+      throw new Error("Merge not supported");
+    },
     close: handle.close,
   };
 }
