@@ -1,6 +1,7 @@
-import fsp from "node:fs/promises";
+import fsp, { type FileHandle } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { HEADER_SIZE, decodeHeader, decodeKV, encodeKV } from "./encoding.js";
+import path from "node:path";
 
 export type NodeCaskOptions = {
   /**
@@ -19,7 +20,7 @@ const defaultOptions: NodeCaskOptions = {
 };
 
 export type KeyEntry = {
-  fileId: number;
+  filename: string;
   position: number;
   size: number;
   timestamp: number;
@@ -29,7 +30,7 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
   const { maxSize: maxLogSize } = options ?? defaultOptions;
 
   if (maxLogSize < 1024 || maxLogSize > 16384) {
-    throw new Error("maxSize needs to be one of 1024 | 4096 | 8192 | 16384");
+    throw new Error("maxSize needs to be between 1024 and 16384");
   }
 
   /**
@@ -40,24 +41,41 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
   /**
    * internal mapping of key to value offset
    */
-  const keyDir = new Map<string, KeyEntry>();
+  const _keyDir = new Map<string, KeyEntry>();
+  let _casks: string[] = [];
 
-  // currently we only handle single log file for persistance
-  // bitcask paper would have you use multiple fixed size log
-  // files and merging as needed.
-  // This means we currently also break the immutability
-  const handle = await fsp.open(`${name}.dat`, "a+");
+  try {
+    _casks = (await fsp.readdir(name)).sort();
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      await fsp.mkdir(name);
+    }
+    // TODO what do here if error not missing directory?
+  }
 
-  await _replay();
+  const currentCask = `${(_casks.length + 1).toString(36).padStart(5, "0")}.dat`;
+
+  const _handle: FileHandle = await fsp.open(path.join(
+    name,
+    currentCask,
+  ), "a+");
+
+  for (const cask of _casks) {
+    if (/[0-9a-z]{5}/.test(cask)) {
+      await _load(cask);
+    }
+  }
 
   /**
    * Read our log file and replay changes against keyDir
    * until EOF.
    */
-  async function _replay() {
+  async function _load(filename: string) {
     const buffer = Buffer.alloc(maxLogSize);
-
+    const readonlyCaskPath = path.join(name, filename);
+    const handle = await fsp.open(readonlyCaskPath, "a+");
     const readResult = await handle.read(buffer, 0, maxLogSize);
+    await handle.close();
 
     // empty log, probably safe to return
     if (readResult.bytesRead === 0) {
@@ -92,14 +110,14 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
       );
 
       // tombstone value encountered, remove if exists otherwise continue
-      if (value === "💩" && keyDir.has(key)) {
-        keyDir.delete(key);
+      if (value === "💩" && _keyDir.has(key)) {
+        _keyDir.delete(key);
         offset += entrySize;
         continue;
       }
 
-      keyDir.set(key, {
-        fileId: 0, // Assuming single file for now
+      _keyDir.set(key, {
+        filename: filename,
         size: HEADER_SIZE + keySize + valueSize,
         // TODO: #1 write value position offset
         // position: filePosition + offset + HEADER_SIZE + keySize,
@@ -112,14 +130,17 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
   }
 
   async function get(key: string): Promise<string | null> {
-    const keyEntry = keyDir.get(key);
+    const keyEntry = _keyDir.get(key);
 
     if (keyEntry === undefined) {
       return null;
     }
-    const buffer = Buffer.alloc(keyEntry.size);
 
+    const buffer = Buffer.alloc(keyEntry.size);
+    const readonlyCaskPath = path.join(name, keyEntry.filename);
+    const handle = await fsp.open(readonlyCaskPath, "r");
     // TODO: #1 optimise read to only read in value as needed and not whole entry
+
     await handle.read(buffer, 0, keyEntry.size, keyEntry.position);
     const result = decodeKV(buffer, 0);
 
@@ -130,13 +151,13 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
     const timestamp = Date.now();
 
     const data = encodeKV(timestamp, key, value);
-    const writeResult = await handle.write(data);
+    const writeResult = await _handle.write(data);
 
     // TODO: implement batch/group sync after N bytes written
-    await handle.sync();
+    await _handle.sync();
 
-    keyDir.set(key, {
-      fileId: 0,
+    _keyDir.set(key, {
+      filename: currentCask,
       timestamp,
       size: writeResult.bytesWritten,
       position: _cursor,
@@ -149,25 +170,25 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
     const timestamp = Date.now();
 
     const data = encodeKV(timestamp, key, "💩");
-    const writeResult = await handle.write(data);
-    await handle.sync();
+    const writeResult = await _handle.write(data);
+    await _handle.sync();
 
-    keyDir.delete(key);
+    _keyDir.delete(key);
 
     _cursor += writeResult.bytesWritten;
   }
 
   function listKeys() {
-    return [...keyDir.keys()];
+    return [..._keyDir.keys()];
   }
 
   async function fold(callback: (key: string, value: string) => void) {
-    for (const entryTuple of keyDir.entries()) {
+    for (const entryTuple of _keyDir.entries()) {
       const [key, keyEntry] = entryTuple;
       const buffer = Buffer.alloc(keyEntry.size);
 
       // TODO: #1 optimise read to only read in value as needed and not whole entry
-      await handle.read(buffer, 0, keyEntry.size, keyEntry.position);
+      await _handle.read(buffer, 0, keyEntry.size, keyEntry.position);
       const header = decodeHeader(buffer, 0);
 
       const value = buffer.toString(
@@ -181,7 +202,7 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
   }
 
   async function sync(): Promise<void> {
-    await handle.sync();
+    await _handle.sync();
   }
 
   return {
@@ -192,9 +213,9 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
     listKeys,
     fold,
     sync,
-    merge: (name: string) => {
+    merge: () => {
       throw new Error("Merge not supported");
     },
-    close: handle.close,
+    close: _handle.close,
   };
 }
