@@ -4,9 +4,7 @@
 
 Based on [bitcask](https://riak.com/assets/bitcask-intro.pdf) paper, though not a complete and production grade implementation.
 
-This is still a work in progress and probably won't ever be fully complete. It is only really useful as learning tool for getting started in building databases, as it was for me.
-
-Currently `merge()` and data file rollover are un implemented. This means a single log file is used for storing all data for reloading from disk.
+This is still a work in progress and probably won't ever be fully complete. It is only really useful as learning tool for getting started in building databases.
 
 ## Usage
 
