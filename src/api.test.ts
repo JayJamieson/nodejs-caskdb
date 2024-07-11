@@ -103,6 +103,28 @@ suite("API tests", () => {
     expect(callback).toBeCalledWith("k2", "v2");
   });
 
+  test("fold() with multi log file", async () => {
+    const db = await openCask("testdata", {
+      maxLogSize: 1024
+    });
+
+    for (let index = 1; index <= 50; index++) {
+      await db.set("0k".padStart(5) + index, "0v".padStart(5) + index);
+    }
+
+    const callback = vi.fn((k: string, v: string) => {});
+
+    await db.fold(callback);
+
+    expect(callback).toBeCalledTimes(50);
+
+    for (let index = 1; index <= 50; index++) {
+      expect(callback).toBeCalledWith("0k".padStart(5) + index, "0v".padStart(5) + index);
+    }
+
+    await db.close();
+  });
+
   test("listKeys() returns all keys added", async () => {
     const db = await openCask("testdata");
 
@@ -114,5 +136,73 @@ suite("API tests", () => {
     await db.close();
 
     expect(["k1", "k2", "k3"]).toStrictEqual(keys);
+  });
+
+  test("reaching maxLogSize triggers roll over to new log", async () => {
+    const db = await openCask("testdata", {
+      maxLogSize: 1024
+    });
+
+    for (let index = 1; index <= 35; index++) {
+      await db.set("0k".padStart(5) + index, "0v".padStart(5) + index);
+    }
+
+    await db.close();
+
+    const logs = (await fs.readdir("testdata")).sort();
+
+    expect(2).toBe(logs.length);
+  });
+
+  test("get works after maxLogSize rollover in set", async () => {
+    const db = await openCask("testdata", {
+      maxLogSize: 1024
+    });
+
+    // causes rollover to second file
+    for (let index = 1; index <= 35; index++) {
+      await db.set("0k".padStart(5) + index, "0v".padStart(5) + index);
+    }
+
+    const a = await db.get("0k".padStart(5) + 35);
+    const b = await db.get("0k".padStart(5) + 34);
+
+    expect(a).toBe("0v".padStart(5) + 35)
+    expect(b).toBe("0v".padStart(5) + 34)
+
+    await db.close();
+  });
+
+  test("merge() merges log files into compact form", async () => {
+    const db = await openCask("testdata", {
+      maxLogSize: 1024
+    });
+
+    // fill with enough data to cause multiple log files
+    for (let index = 1; index <= 50; index++) {
+      await db.set("0k".padStart(5) + index, "0v".padStart(5) + index);
+    }
+
+    // perform updates on subset
+    for (let index = 1; index <= 35; index++) {
+      await db.set("0k".padStart(5) + index, "0V".padStart(5) + index);
+    }
+
+    // delete middle keys
+    for (let index = 11; index <= 40; index++) {
+      await db.delete("0k".padStart(5) + index);
+    }
+
+    // before merge
+    const beforeMerge = await fs.readdir("./testdata");
+
+    await db.merge();
+
+    const afterMerge = await fs.readdir("./testdata");
+
+    expect(beforeMerge.length).toBe(3);
+    expect(afterMerge.length).toBe(2);
+
+    await db.close();
   });
 });

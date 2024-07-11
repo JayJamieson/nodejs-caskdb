@@ -1,7 +1,16 @@
-import fsp, { type FileHandle } from "node:fs/promises";
+import fs, { type FileHandle } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { HEADER_SIZE, decodeHeader, decodeKV, encodeKV } from "./encoding.js";
 import path from "node:path";
+
+function nextLogFileName(start: number) {
+  let counter = start;
+
+  return () => {
+    counter += 1;
+    return `${counter.toString().padStart(5, "0")}.dat`;
+  };
+}
 
 export type NodeCaskOptions = {
   /**
@@ -12,11 +21,11 @@ export type NodeCaskOptions = {
    *
    * Larger are supported but can take up more memory while restoring
    */
-  maxSize: number | 1024 | 4096 | 8192 | 16384;
+  maxLogSize: number | 1024 | 4096 | 8192 | 16384;
 };
 
-const defaultOptions: NodeCaskOptions = {
-  maxSize: 4 * 1024,
+export const DefaultOptions: NodeCaskOptions = {
+  maxLogSize: 4 * 1024,
 };
 
 export type KeyEntry = {
@@ -27,7 +36,7 @@ export type KeyEntry = {
 };
 
 export async function openCask(name: string, options?: NodeCaskOptions) {
-  const { maxSize: maxLogSize } = options ?? defaultOptions;
+  const { maxLogSize: maxLogSize } = options ?? DefaultOptions;
 
   if (maxLogSize < 1024 || maxLogSize > 16384) {
     throw new Error("maxSize needs to be between 1024 and 16384");
@@ -45,20 +54,19 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
   let _casks: string[] = [];
 
   try {
-    _casks = (await fsp.readdir(name)).sort();
+    _casks = (await fs.readdir(name)).sort();
   } catch (error: unknown) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      await fsp.mkdir(name);
+      await fs.mkdir(name);
+    } else {
+      // rethrow, what can we actualy do from here?
+      throw error;
     }
-    // TODO what do here if error not missing directory?
   }
 
-  const currentCask = `${(_casks.length + 1).toString(36).padStart(5, "0")}.dat`;
+  let currentCask = `${(_casks.length + 1).toString().padStart(5, "0")}.dat`;
 
-  const _handle: FileHandle = await fsp.open(path.join(
-    name,
-    currentCask,
-  ), "a+");
+  let _handle: FileHandle = await fs.open(path.join(name, currentCask), "a+");
 
   for (const cask of _casks) {
     if (/[0-9a-z]{5}/.test(cask)) {
@@ -73,7 +81,7 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
   async function _load(filename: string) {
     const buffer = Buffer.alloc(maxLogSize);
     const readonlyCaskPath = path.join(name, filename);
-    const handle = await fsp.open(readonlyCaskPath, "a+");
+    const handle = await fs.open(readonlyCaskPath, "a+");
     const readResult = await handle.read(buffer, 0, maxLogSize);
     await handle.close();
 
@@ -138,7 +146,7 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
 
     const buffer = Buffer.alloc(keyEntry.size);
     const readonlyCaskPath = path.join(name, keyEntry.filename);
-    const handle = await fsp.open(readonlyCaskPath, "r");
+    const handle = await fs.open(readonlyCaskPath, "r");
     // TODO: #1 optimise read to only read in value as needed and not whole entry
 
     await handle.read(buffer, 0, keyEntry.size, keyEntry.position);
@@ -151,6 +159,15 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
     const timestamp = Date.now();
 
     const data = encodeKV(timestamp, key, value);
+
+    if (_cursor + data.length > maxLogSize) {
+      await _handle.close();
+      _casks.push(currentCask);
+      currentCask = `${(_casks.length + 1).toString().padStart(5, "0")}.dat`;
+      _handle = await fs.open(path.join(name, currentCask), "a+");
+      _cursor = 0;
+    }
+
     const writeResult = await _handle.write(data);
 
     // TODO: implement batch/group sync after N bytes written
@@ -174,7 +191,6 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
     await _handle.sync();
 
     _keyDir.delete(key);
-
     _cursor += writeResult.bytesWritten;
   }
 
@@ -182,23 +198,98 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
     return [..._keyDir.keys()];
   }
 
-  async function fold(callback: (key: string, value: string) => void) {
+  async function fold(
+    callback: (key: string, value: string, path?: string) => void,
+  ) {
     for (const entryTuple of _keyDir.entries()) {
       const [key, keyEntry] = entryTuple;
       const buffer = Buffer.alloc(keyEntry.size);
 
       // TODO: #1 optimise read to only read in value as needed and not whole entry
-      await _handle.read(buffer, 0, keyEntry.size, keyEntry.position);
+      const handle = await fs.open(path.join(name, keyEntry.filename), "r");
+      await handle.read(buffer, 0, keyEntry.size, keyEntry.position);
+      await handle.close();
+
       const header = decodeHeader(buffer, 0);
 
-      const value = buffer.toString(
+      const outValue = buffer.toString(
         "utf8",
         HEADER_SIZE + header[1],
         HEADER_SIZE + header[1] + header[2],
       );
 
-      callback(key, value);
+      callback(key, outValue);
     }
+  }
+
+  async function merge(): Promise<void> {
+    /**
+     * Close current handle, nothing should be able to write to it anyway during a merge.
+     * Thats the idea at least.
+     */
+    await _handle.close();
+
+    const oldFiles = [..._casks, currentCask];
+
+    const nextName = nextLogFileName(oldFiles.length);
+
+    let nextFileName = nextName();
+    let nextFile = await fs.open(path.join(name, nextFileName), "a+");
+
+    /**
+     * There is probably a more efficient algorithm to do this. Instead of
+     * open close the logs we could probably keep it open somewhere.
+     *
+     * Iterate over each/value pair and follow ptr to where latest value is
+     * and write them to new log file and update keydir with new location
+     *
+     * This assumes that keyDir as source of truth.
+     */
+    let cursor = 0;
+    for (const keyEntry of _keyDir.entries()) {
+      const [key, entry] = keyEntry;
+      const buff = Buffer.alloc(entry.size);
+
+      const oldFile = await fs.open(path.join(name, entry.filename), "r");
+
+      const readResult = await oldFile.read(
+        buff,
+        0,
+        entry.size,
+        entry.position,
+      );
+
+      if (cursor + readResult.bytesRead > maxLogSize) {
+        await nextFile.close();
+        nextFileName = nextName();
+        nextFile = await fs.open(path.join(name, nextFileName), "a+");
+        cursor = 0;
+      }
+
+      const writeResult = await nextFile.write(buff, 0, buff.length, cursor);
+      await nextFile.sync();
+
+      _keyDir.set(key, {
+        filename: nextFileName,
+        position: cursor,
+        size: writeResult.bytesWritten,
+        timestamp: entry.timestamp,
+      });
+
+      await oldFile.close();
+      cursor += writeResult.bytesWritten;
+    }
+
+    await nextFile.close();
+
+    // remove old logs
+    for (const file of oldFiles) {
+      await fs.rm(path.join(name, file));
+    }
+
+    //
+    currentCask = nextName();
+    _handle = await fs.open(path.join(name, currentCask), "a+");
   }
 
   async function sync(): Promise<void> {
@@ -206,16 +297,13 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
   }
 
   return {
-    // TODO: implement merge
     get,
     set,
     delete: remove,
     listKeys,
     fold,
+    merge,
     sync,
-    merge: () => {
-      throw new Error("Merge not supported");
-    },
     close: _handle.close,
   };
 }
