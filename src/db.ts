@@ -29,6 +29,11 @@ export type NodeCaskOptions = {
    * When sync is `true` every write is `fsync`'d
    */
   sync?: boolean;
+
+  /**
+   * Write to internal buffer and not directly to disk.
+   */
+  batched?: boolean;
 };
 
 export const DefaultOptions: NodeCaskOptions = {
@@ -45,6 +50,8 @@ export type KeyEntry = {
 
 export async function openCask(name: string, options?: NodeCaskOptions) {
   const { maxLogSize: maxLogSize } = options ?? DefaultOptions;
+
+  let _batchBuffer = Buffer.alloc(maxLogSize);
 
   if (maxLogSize < 1024 || maxLogSize > 16384) {
     throw new Error("maxSize needs to be between 1024 and 16384");
@@ -170,30 +177,41 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
 
     const maybeMaxSize = _cursor + data.length;
 
-    if (maybeMaxSize > maxLogSize) {
-      await _handle.close();
+    if (options?.batched && maybeMaxSize >= maxLogSize) {
+      await _handle.write(_batchBuffer);
+
+      if (options?.sync) {
+        await _handle.sync();
+      }
+    }
+
+    if (maybeMaxSize >= maxLogSize) {
       _casks.push(currentCask);
       currentCask = `${(_casks.length + 1).toString().padStart(5, "0")}.dat`;
       await _handle.close();
       _handle = await fs.open(path.join(name, currentCask), "a+");
+      _batchBuffer = Buffer.alloc(maxLogSize);
       _cursor = 0;
     }
 
-    const writeResult = await _handle.write(data);
+    if (options?.batched) {
+      data.copy(_batchBuffer, _cursor, 0, data.length);
+    } else {
+      _handle.write(data);
 
-    if (options?.sync && maybeMaxSize >= maxLogSize) {
-      // TODO: implement batch/group sync after N bytes written
-      await _handle.sync();
+      if (options?.sync) {
+        await _handle.sync();
+      }
     }
 
     _keyDir.set(key, {
       filename: currentCask,
       timestamp,
-      size: writeResult.bytesWritten,
+      size: data.length,
       position: _cursor,
     });
 
-    _cursor += writeResult.bytesWritten;
+    _cursor += data.length;
   }
 
   async function remove(key: string): Promise<void> {

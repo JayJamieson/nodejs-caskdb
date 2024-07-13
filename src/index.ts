@@ -1,14 +1,17 @@
 // export * from "./db.js";
 // export * from "./encoding.js";
 import { openCask } from "./db.js";
+import fs from "node:fs/promises";
 
 const sizes = [1024, 2048, 4096, 8192, 16384];
+// const sizes = [1024];
 
 for (const size of sizes) {
   const name = `logs_${size}`;
   const db = await openCask(name, {
     maxLogSize: size,
-    sync: true,
+    sync: false,
+    batched: true
   });
 
   console.time(name);
@@ -17,6 +20,9 @@ for (const size of sizes) {
     await db.set("".padStart(5, "0") + index, "".padStart(5,"0") + index);
   }
   console.timeEnd(name);
-
+  await fs.rm(`./logs_${size}`, {
+    force: true,
+    recursive: true
+  });
   await db.close();
 }
