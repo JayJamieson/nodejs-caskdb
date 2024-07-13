@@ -21,11 +21,19 @@ export type NodeCaskOptions = {
    *
    * Larger are supported but can take up more memory while restoring
    */
-  maxLogSize: number | 1024 | 4096 | 8192 | 16384;
+  maxLogSize: number | 1024 | 2048 | 4096 | 8192 | 16384;
+
+  /**
+   * When sync is `false` writes are not `fsync`'d to disk immediatly. They are flushed
+   * after `maxLogSize` amount of bytes are written.
+   * When sync is `true` every write is `fsync`'d
+   */
+  sync?: boolean;
 };
 
 export const DefaultOptions: NodeCaskOptions = {
   maxLogSize: 4 * 1024,
+  sync: false,
 };
 
 export type KeyEntry = {
@@ -160,18 +168,23 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
 
     const data = encodeKV(timestamp, key, value);
 
-    if (_cursor + data.length > maxLogSize) {
+    const maybeMaxSize = _cursor + data.length;
+
+    if (maybeMaxSize > maxLogSize) {
       await _handle.close();
       _casks.push(currentCask);
       currentCask = `${(_casks.length + 1).toString().padStart(5, "0")}.dat`;
+      await _handle.close();
       _handle = await fs.open(path.join(name, currentCask), "a+");
       _cursor = 0;
     }
 
     const writeResult = await _handle.write(data);
 
-    // TODO: implement batch/group sync after N bytes written
-    await _handle.sync();
+    if (options?.sync && maybeMaxSize >= maxLogSize) {
+      // TODO: implement batch/group sync after N bytes written
+      await _handle.sync();
+    }
 
     _keyDir.set(key, {
       filename: currentCask,
@@ -304,6 +317,8 @@ export async function openCask(name: string, options?: NodeCaskOptions) {
     fold,
     merge,
     sync,
-    close: _handle.close,
+    close: async () => {
+      await _handle.close();
+    },
   };
 }
