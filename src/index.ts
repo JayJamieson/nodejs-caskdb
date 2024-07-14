@@ -4,7 +4,6 @@ import { openCask } from "./db.js";
 import fs from "node:fs/promises";
 
 const sizes = [1024, 2048, 4096, 8192, 16384];
-// const sizes = [1024];
 
 for (const size of sizes) {
   const name = `logs_${size}`;
